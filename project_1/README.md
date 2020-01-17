@@ -14,3 +14,6 @@ The UMD_Services_Provided data set tracks when clients visit and the sort of ass
 
 
 It would be of interest to investigate any trends involving the frequency of visits, as this is useful to UMD to being more logistically prepared. To take that a level further, we could to group visitors into categories denoting how often they have visited over the years. Because an intermediate goal to eliminating homelessness is in reducing chronic homelessness (as opposed to temporary homelessness), knowing what separates the two might give some insight into this.
+
+
+HTML report given in /results.
