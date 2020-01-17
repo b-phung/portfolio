@@ -1,0 +1,140 @@
+---
+title: "Investigating UMD visit frequency"
+author: "Brian Phung"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+## Reading in the data
+This first chunk reads in the data. We specify the col_types of the Field columns to avoid a reading warning. Off the bat, it's instructive to format the date so it's usable. Additionally, we extract the year for each entry.
+```{r}
+UMD_df = read_tsv("~/Documents/611/bios611-projects-fall-2019-b-phung/project_1/data/UMD_Services_Provided_20190719.tsv", col_types = cols(Field1 = col_character(), Field2 = col_character(), Field3 = col_character())) %>%
+  mutate(formatted.date = as.Date(Date, "%m/%d/%Y")) %>%
+  arrange(formatted.date, `Client File Number`) %>%
+  mutate(year = as.numeric(format(formatted.date, "%Y")))
+```
+
+***
+## Summary by year
+For a quick overview, we are interested in summarizing the data by year. In particular, we can see the numerical quantities of resources provided for each year. There were a lot of missing values in the data set, so we use the `na.rm = T` option. Of course, it could be that those values are non-zero, but we just don't know. Effectively, this means that this is a summary of "known" or "recorded" resources provided.
+
+Keep in mind that "Bus Tickets" and Food" here refer to the number of individuals bus tickets and food respectively were provided to in a given year.
+
+```{r, fig.align="center"}
+annual.summary = UMD_df %>%
+  group_by(year) %>%
+  summarize(count = n(),
+            `Bus Tickets` = sum(`Bus Tickets (Number of)`, na.rm = T),
+            `Food` = sum(`Food Provided for`, na.rm = T),
+            `Food Pounds` = sum(`Food Pounds`, na.rm = T),
+            `Clothing Items` = sum(`Clothing Items`, na.rm = T),
+            Diapers = sum(`Diapers`, na.rm = T),
+            `School Kits` = sum(`School Kits`, na.rm = T),
+            `Hygiene Kits` = sum(`Hygiene Kits`, na.rm = T),
+            `Financial Support` = sum(`Financial Support`, na.rm = T))
+
+knitr::kable(annual.summary)
+```
+
+There are some strange results in this, namely that there are entries for 1931, 1941, and so on, as well as entries for 2021 and 2022. Presumably, these are mistakes in data entry, since UMD was founded in 1983, and the current year is 2019. (Not explicitly shown here, but one may check that the all but the last entry for 2019 are prior to the date in the raw .tsv file name.)
+
+Making a judgement call to filter out dates before 1996 and after 2019, we give a visual representation showing the number of families serviced per year.
+
+```{r, fig.align="center"}
+year.filtered.UMD = UMD_df %>%
+  filter(1996 <= year & year <= 2019)
+
+year.filtered.UMD %>%
+  ggplot(aes(year)) +
+    geom_bar() +
+    ylab("visits") +
+    ggtitle("Graph 1: frequency of visitors from 1996 to 2019") +
+    theme_minimal()
+```
+
+Besides the current year 2019, which is not yet complete, there has generally been an increase of visitors throughout the years. It is unclear if this indicates a growing homeless population, as another possible contributor to the increase is simply is that people are more aware of UMD's presence.
+
+Something to note: there seems to have been a considerable spike in visitors in 2009; did something happen that year in particular?
+
+***
+
+## Stratification by visit count
+Something of interest would be to see the breakdown of how frequently families visit, so we code that here: we need to count how many times each given client has visited, and append that to the main data set. However, values of visits ranged from 1 to 249, which is simply too many levels to be useful, so we further group the count by 10s with the last category being 50+.
+
+```{r, fig.align="center"}
+visits.by.client = year.filtered.UMD %>%
+  group_by(`Client File Number`) %>%
+  summarize(visits=n())
+visits.by.client$visits.bin = cut(visits.by.client$visits, c(0,10,20,30,40,50,Inf))
+
+year.filtered.UMD %>%
+  left_join(visits.by.client, "Client File Number") %>%
+  ggplot(aes(year)) +
+    geom_bar(aes(fill = visits.bin), position = position_stack(reverse = TRUE)) + 
+    ylab("visits") +
+    ggtitle("Graph 2: frequency of visitors from 1996 to 2019, stratified by visit frequency") +
+    theme_minimal()
+```
+
+Visit counts are relatively low before 2000 or so, so those proportions are harder to see from the above figure, and may not mean much anyway. By eye, roughly 50 to 60 percent of the visits each year are composed of those coming 10 times or less in the most years in the 2000s, but in the 2010s that proportion appears to have reduced to about 40%. We can confirm by plotting the proportion of visitors who fall into the (0,10] bin to total visitors:
+
+```{r, fig.align="center"}
+all.bins = year.filtered.UMD %>%
+  left_join(visits.by.client, "Client File Number") %>%
+  select(year, visits.bin) %>%
+  group_by(year) %>%
+  summarize(all.bins = n())
+
+year.filtered.UMD %>%
+  left_join(visits.by.client, "Client File Number") %>%
+  select(year, visits.bin) %>%
+  group_by(year, visits.bin) %>%
+  summarize(year.bin = n()) %>%
+  left_join(all.bins, by="year",) %>%
+  mutate(proportion = year.bin/all.bins) %>%
+  filter(visits.bin == "(0,10]") %>%
+  ggplot(aes(x = year, y = proportion)) +
+    geom_point() +
+    geom_smooth(se = F) +
+    theme_minimal() +
+    ggtitle("Graph 3: proportions of clients who came 10 times or less each year")
+```
+
+The proportion of low-frequency visitors seems to trend upwards until around 2004 or 2005, and then downwards until 2013 or so, before trending back up. Equivalently, this means a higher proportion of visitors could be classified as chronic, until 2013.
+
+***
+
+## Characteristics of low-frequency visitors vs. high-frequency visitors
+
+Here, we try to investigate the differences between chronic visitors, and one- or low-time visitors. For example, we might expect that someone provided with more resources will eventually visit less. Given that chronic visitors come many times over many years, it is logically to subset the data by clients' first visit date 1999 and before; it would be difficult to determine whether a visitor who started coming more recently is a chronic visitor or not. Of course, 1999 is somewhat arbitrarily chosen, and one could choose a later year to start with, but it is nice that this restriction makes the data a little more manageable.
+
+```{r}
+tenure = year.filtered.UMD %>%
+  left_join(visits.by.client, "Client File Number") %>%
+  group_by(Client=`Client File Number`) %>%
+  summarize(visit.count = n(),
+            first.visit = min(formatted.date),
+            last.visit = max(formatted.date),
+            time.between = last.visit - first.visit,
+            avg.time.between = time.between / visit.count,
+            food = sum(`Food Provided for`, na.rm = T),
+            n.food = sum(!is.na(`Food Provided for`)),
+            nmiss.food = sum(is.na(`Food Provided for`)),
+            finsup = sum(`Financial Support`, na.rm = T),
+            n.finsup = sum(!is.na(`Financial Support`)),
+            nmiss.finsup = sum(is.na(`Financial Support`))) %>%
+  arrange(desc(time.between)) %>%
+  filter(as.numeric(format(first.visit, "%Y")) <= 1999)
+knitr::kable(head(tenure,5), caption = "Longest continuously visiting clients since 1999")
+knitr::kable(tail(tenure,5), caption = "Shortest continuously visiting clients since 1999 (all one-time visitors)")
+
+```
+
+Interpreting the role of `Financial Support provided` (if there is one at all) is challenging given the quantity of missing values. However, we can see that even in cases where `Financial Support` has an abundance of known entries, many are 0. Similar things can be said of the other columns detailing resources provided.
+
+One of the more complete columns is `Food Provided for`, which details the number of individuals food was provided for in a given visit. It wouldn't necessarily make sense to compare this to visit count because food provided within each visit would depend on how many are needed to be fed in the family, and collating visits by visitor would only tally up the food counts, and of course the more one visits, the more one's provided food will have aggregated.
+
+Ultimately, the question we care about is what separates those who only need a little assistance to get back on their feet from those who come periodically over the course of decades, because we would like to move people from the latter group to the former. UMD provides the same support to those in need indiscriminately as far as can be discerned from this data, so it stands to reason that the issue is a systemic one far broader than we in the micro are able to address. This is not to criticize; in fact, UMD's services are very admirable, and undoubtedly improve people's lives. Rather, food and shelter, while necessary, are not sufficient in themselves to sustain someone in need.
